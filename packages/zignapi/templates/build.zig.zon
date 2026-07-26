@@ -1,0 +1,13 @@
+.{
+    .name = .__NAME__,
+    .version = "0.1.0",
+    .minimum_zig_version = "0.16.0",
+    // `zignapi new` fills in `.fingerprint` and adds the `zignapi` dependency
+    // below via `zig fetch --save` (which pins zignapi by content hash).
+    .dependencies = .{},
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}

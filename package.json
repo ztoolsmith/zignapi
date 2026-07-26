@@ -1,0 +1,15 @@
+{
+  "name": "zignapi-monorepo",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "pnpm -r run build",
+    "test": "pnpm -r run test",
+    "clean": "pnpm -r exec rm -rf dist zig-out .zig-cache"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2",
+    "@types/node": "^22.10.0"
+  },
+  "packageManager": "pnpm@11.8.0"
+}

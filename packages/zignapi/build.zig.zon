@@ -1,0 +1,12 @@
+.{
+    .name = .zignapi,
+    .version = "0.3.0",
+    .fingerprint = 0x582024f92c57df77, // Changing this has security and trust implications.
+    .minimum_zig_version = "0.16.0",
+    .dependencies = .{},
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "native",
+    },
+}

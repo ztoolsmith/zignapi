@@ -1,0 +1,15 @@
+node_modules/
+dist/
+zig-out/
+.zig-cache/
+zig-cache/
+*.node
+*.wasm
+
+# Générés par `zignapi build` dans les exemples
+/examples/*/index.js
+/examples/*/index.d.ts
+/examples/*/bindings.js
+/examples/*/wasm.js
+/examples/*/wasm.d.ts
+/examples/*/npm/

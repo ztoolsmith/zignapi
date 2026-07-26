@@ -1,0 +1,18 @@
+{
+  "name": "hello-world-example",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Exemple d'addon zignapi exerçant tout le pipeline build/test",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "scripts": {
+    "build": "zignapi build",
+    "test": "node --test"
+  },
+  "zignapi": {
+    "binaryName": "hello"
+  },
+  "devDependencies": {
+    "zignapi": "workspace:*"
+  }
+}
