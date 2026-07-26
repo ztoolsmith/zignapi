@@ -1,17 +1,17 @@
 # zignapi
 
-Écrire des addons Node.js en **Zig** — le napi-rs du Zig. Une seule déclaration
-comptime produit un addon **natif `.node`** ou un module **WebAssembly**, avec la
-même API JS et un `.d.ts` généré. CLI en TypeScript, **zéro dépendance runtime**,
-pas de `node-gyp`.
+Write Node.js addons in **Zig** — the napi-rs of Zig. A single comptime
+declaration produces either a **native `.node` addon** or a **WebAssembly**
+module, with the same JS API and a generated `.d.ts`. TypeScript CLI, **zero
+runtime dependencies**, no `node-gyp`.
 
-Prérequis : **Zig 0.16.0** dans le `PATH`, **Node ≥ 18**.
+Requirements: **Zig 0.16.0** in `PATH`, **Node ≥ 18**.
 
 ```sh
-npm install -g zignapi   # installe la commande `zignapi`
+npm install -g zignapi   # installs the `zignapi` command
 ```
 
-## Déclarer des fonctions
+## Declaring functions
 
 ```zig
 const std = @import("std");
@@ -24,15 +24,37 @@ pub fn greet(a: std.mem.Allocator, name: []const u8) ![]const u8 {
 comptime {
     zignapi.register(.{
         .greet = greet,
-        .VERSION = "1.0.0", // une valeur non-fonction = une constante du module
+        .VERSION = "1.0.0", // a non-function value becomes a module constant
     });
 }
 ```
 
-`register(.{ … })` est **LA** déclaration unique. La cible décide de l'artefact
-(natif ou wasm) ; la branche morte est élaguée au comptime.
+`register(.{ … })` is **THE** single declaration. The target decides the artifact
+(native or wasm); the dead branch is pruned at comptime.
 
-### Conversions (comptime, deux sens, récursives)
+## How it works
+
+Everything happens at **compile time**. `register` receives an anonymous struct,
+walks its fields with `@typeInfo`, and for each function reads the parameter and
+return types. From those types alone it generates, in the same pass:
+
+1. **the entry point** for each function — argument extraction, conversion, error
+   propagation (`register.zig`);
+2. **the conversions both ways**, recursively (`convert.zig`) — a `struct` becomes
+   a JS object, a slice an array, `?T` a `T | null`, an `enum` its tag name;
+3. **the TypeScript declarations** (`typedefs.zig`) — the `.d.ts` is derived from
+   the *same* type information, so it cannot drift from the implementation.
+
+Because it is comptime, there is no reflection at runtime and no glue to
+maintain: your Zig signature *is* the JS signature. Writing an addon comes down
+to writing ordinary Zig functions and listing them once.
+
+The **branch between backends** is comptime too. The native backend links libc
+and resolves N-API symbols from the host process; the wasm backend targets
+`wasm32-freestanding` (no WASI) and ships a small synchronous JS glue. Only the
+branch matching the target is compiled — that is why one declaration covers both.
+
+### Conversions (comptime, both ways, recursive)
 
 | Zig | JS | `.d.ts` |
 |---|---|---|
@@ -42,88 +64,127 @@ comptime {
 | `struct { … }` | `{ … }` | `{ a: T; … }` |
 | `[]T` (T ≠ `u8`) | `Array<T>` | `Array<T>` |
 | `?T` | `T \| null` | `T \| null` |
-| `enum` | le `@tagName` | `"a" \| "b"` |
+| `enum` | the `@tagName` | `"a" \| "b"` |
 | `union(enum)` | `{ type: "<tag>", …payload }` | union |
 
-### Paramètres injectés (ne consomment pas d'argument JS)
+Composites recurse, so an unsupported leaf type fails **at comptime** with a
+message pointing at the offending type.
 
-- **`std.mem.Allocator`** — l'arène d'appel. Alloues-y ton résultat et retourne-le :
-  zignapi le convertit en JS **puis libère** l'arène (règle de lifetime).
-- **`napi.Env`** / **`napi.Value`** — échappatoires bas niveau (valeur JS brute).
+### Injected parameters (they consume no JS argument)
 
-### Erreurs, async, threadsafe (natif)
+- **`std.mem.Allocator`** — the call arena. Allocate your result in it and return
+  it: zignapi converts it to JS **then frees** the arena. That is the lifetime
+  rule — the copy into the JS engine happens while the memory is still alive, so
+  there is no use-after-free and no leak, by construction.
+- **`napi.Env`** / **`napi.Value`** — low-level escape hatches (raw JS value).
 
-- `return zignapi.fail("message")` → une exception JS au message custom
-  (un `!T` qui fuit sans `fail` lève `@errorName(err)`).
-- `zignapi.asyncFn(f)` → exécute `f` sur le thread pool de libuv, retourne une `Promise`.
-- `zignapi.ThreadsafeFunction(T)` → appeler un callback JS depuis n'importe quel thread.
+### Errors, async, threadsafe (native)
 
-## Commandes
+- `return zignapi.fail("message")` → a JS exception with a custom message
+  (a `!T` that escapes without `fail` throws `@errorName(err)`).
+- `zignapi.asyncFn(f)` → runs `f` on the libuv thread pool, returns a `Promise`.
+- `zignapi.ThreadsafeFunction(T)` → call a JS callback from any thread.
+
+## Commands
 
 ```sh
-zignapi new <name>              # scaffolde ./<name> depuis le template intégré
-zignapi build                   # hôte : <name>.node + bindings.js + index.js + index.d.ts
-zignapi build --target <triple> # cross-compile un triple → npm/<triple>/
-zignapi build --target wasm     # backend WASM : <name>.wasm + wasm.js + wasm.d.ts
-zignapi build --all             # tous les targets de la config (résilient)
-zignapi build --release         # -Doptimize=ReleaseFast (ReleaseSmall pour wasm)
-zignapi prepublish              # assemble les packages par plateforme + l'exports map
+zignapi new <name>              # scaffolds ./<name> from the built-in template
+zignapi build                   # host: <name>.node + bindings.js + index.js + index.d.ts
+zignapi build --target <triple> # cross-compile one triple → npm/<triple>/
+zignapi build --target wasm     # WASM backend: <name>.wasm + wasm.js + wasm.d.ts
+zignapi build --all             # every target in the config (resilient)
+zignapi build --release         # -Doptimize=ReleaseFast (ReleaseSmall for wasm)
+zignapi prepublish              # assembles the platform packages + the exports map
 ```
 
-- `new` copie le template et épingle la dépendance Zig `zignapi` (`zig fetch --save`).
-- `build` lance `zig build`, copie le binaire, et génère le loader + les types.
-  Zig **cross-compile nativement** — un `.node` linux/darwin se produit depuis
-  n'importe quel hôte (seul **win32-msvc** exige un hôte Windows : Zig ne fournit
-  pas la libc MSVC).
+- `new` copies the template and pins the `zignapi` Zig dependency (`zig fetch --save`).
+- `build` runs `zig build`, copies the binary, then generates the loader and the
+  types. Zig **cross-compiles natively** — a linux/darwin `.node` can be produced
+  from any host. Only **win32-msvc** requires a Windows host: Zig does not ship
+  the MSVC libc.
 
-## Config — le champ `"zignapi"` du `package.json` (source unique)
+## Config — the `"zignapi"` field of `package.json` (single source)
 
 ```jsonc
 {
   "name": "@me/mylib",
-  "version": "1.0.0",              // héritée par les packages de plateforme
+  "version": "1.0.0",              // inherited by the platform packages
   "zignapi": {
-    "binaryName": "mylib",         // nomme les fichiers .node/.wasm
-    "packageName": "@me/binding",  // nomme les packages de plateforme (déf: name)
+    "binaryName": "mylib",         // names the .node/.wasm files
+    "packageName": "@me/binding",  // names the platform packages (default: name)
     "targets": ["darwin-arm64", "linux-x64-gnu", "wasm"]
   }
 }
 ```
 
-Dérivations : binaire `<binaryName>.<triple>.node`, package plateforme
-`<packageName>-<triple>`, version héritée, loader généré depuis `targets`.
-Défauts : `binaryName`/`packageName` absents → le `name` ; `targets` absent → le
-triple de la machine courante.
+`binaryName` and `packageName` are **two independent axes**: one names the binary
+*files*, the other the platform *packages*. Neither has to match the main `name`.
 
-## Le layout généré
+| Item | Derivation | Example |
+|---|---|---|
+| binary file | `<binaryName>.<triple>.node` | `mylib.darwin-arm64.node` |
+| platform package | `<packageName>-<triple>` | `@me/binding-darwin-arm64` |
+| platform version | inherited from `version` | `1.0.0` |
+| loader | generated from `targets` + `packageName` | (inlined) |
 
-| Fichier | Rôle |
+Sane defaults: no `binaryName` → the `name` without its scope; no `packageName` →
+the `name`; no `targets` → the current machine's triple.
+
+## Supported triples
+
+| npm triple | `os`/`cpu`/`libc` | Zig `-Dtarget` |
+|---|---|---|
+| darwin-arm64 | darwin / arm64 | aarch64-macos |
+| darwin-x64 | darwin / x64 | x86_64-macos |
+| linux-x64-gnu | linux / x64 / glibc | x86_64-linux-gnu |
+| linux-x64-musl | linux / x64 / musl | x86_64-linux-musl |
+| linux-arm64-gnu | linux / arm64 / glibc | aarch64-linux-gnu |
+| linux-arm64-musl | linux / arm64 / musl | aarch64-linux-musl |
+| win32-x64-msvc | win32 / x64 | x86_64-windows-msvc |
+| win32-arm64-msvc | win32 / arm64 | aarch64-windows-msvc |
+
+Triple names follow **napi-rs**, so the surrounding tooling stays compatible.
+
+## The generated layout
+
+| File | Role |
 |---|---|
-| `bindings.js` | le loader **natif** (détecte plateforme/libc, résout `.node`) |
-| `index.js` | l'entrée publique Node (re-export de `bindings.js`) |
-| `wasm.js` | la glue **WASM** — UMD, synchrone, API identique, module embarqué |
-| `index.d.ts` | les types (source unique) |
-| `wasm.d.ts` | un alias `export * from "./index.js"` (jamais une copie) |
-| `<binaryName>.wasm` | le module WASM |
+| `bindings.js` | the **native** loader (detects platform/libc, resolves the `.node`) |
+| `index.js` | the public Node entry (re-exports `bindings.js`) |
+| `wasm.js` | the **WASM** glue — UMD, synchronous, identical API, module embedded |
+| `index.d.ts` | the types (single source) |
+| `wasm.d.ts` | an alias `export * from "./index.js"` — never a copy |
+| `<binaryName>.wasm` | the WASM module |
 
-`prepublish` (si `wasm` est ciblé) écrit l'`exports` map (`types` en premier,
-`browser`→`wasm.js`, `node`→`index.js`) : un bundler prend le wasm, Node le natif.
+The loader resolves, in order: the dev `./<binary>.node` at the root, then
+`./npm/<triple>/`, then the published `<packageName>-<triple>` package, and
+otherwise raises a clear error listing the supported triples and everything it
+tried. libc is detected without any dependency
+(`process.report.getReport().header.glibcVersionRuntime` present ⇒ `gnu`).
 
-## Structure de ce package
+`prepublish` (when `wasm` is targeted) writes the `exports` map (`types` first,
+`browser`→`wasm.js`, `node`→`index.js`): a bundler picks up the wasm, Node the
+native binary.
 
-Deux produits dans un package :
+## What is in this package
 
-- `native/` — la **bibliothèque Zig** (module `@import("zignapi")`) :
-  `register.zig` (branche natif/wasm), `convert.zig`, `typedefs.zig`, `napi.zig`,
-  `wasm.zig`, `async.zig`, `errors.zig`, `root.zig` + `vendor/` (headers N-API).
-- `src/` — la **CLI TypeScript** (`cli`, `build`, `new`, `zig`, `config`,
-  `triples`, `loader`, `packaging`, `prepublish`), compilée en `dist/`.
-- `templates/` — l'arbre copié par `zignapi new`.
+Two products in one package:
 
-## Développement
+- `native/` — the **Zig library** (the `@import("zignapi")` module):
+  `register.zig` (the native/wasm branch), `convert.zig`, `typedefs.zig`,
+  `napi.zig`, `wasm.zig`, `async.zig`, `errors.zig`, `root.zig` + `vendor/`
+  (N-API headers). It is **not published to npm** — the Zig library is
+  distributed through the GitHub release tarball, which `zignapi new` fetches.
+- `src/` — the **TypeScript CLI** (`cli`, `build`, `new`, `zig`, `config`,
+  `triples`, `loader`, `packaging`, `prepublish`), compiled into `dist/`.
+- `templates/` — the tree copied by `zignapi new`.
+
+## Development
 
 ```sh
 pnpm install
 pnpm --filter zignapi build   # zig build (checks) + tsc (CLI)
 pnpm --filter zignapi test    # zig build test (comptime + conversions)
 ```
+
+MIT.

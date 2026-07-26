@@ -494,6 +494,18 @@ CI navigateur, le split.
 <!-- Chaque modification de code est notée ici, la plus récente en haut.
      Format : - AAAA-MM-JJ — <résumé du changement> (fichiers touchés) -->
 
+- 2026-07-25 — **Windows natif (.node)** : révélé par la CI. Une DLL Windows ne peut
+  PAS laisser les symboles N-API indéfinis comme ELF/Mach-O (`lld-link: undefined
+  symbol: napi_*`). Fix : `native/vendor/node_api.def` (156 symboles + `LIBRARY
+  node.exe`, généré depuis les headers vendored), exposé par `build.zig` via
+  `b.addNamedLazyPath("node_api_def", …)`. Le build.zig du CONSOMMATEUR
+  (template + hello-world + zcompiler) génère une import lib au build sur Windows
+  (`zig lib /def:` → `node_api.lib`) et lie l'addon dessus → les symboles se
+  résolvent contre le `node.exe` hôte au chargement. **Détail clé** : le def est
+  référencé via `dependency.namedLazyPath` (PAS `dependency.path`, qui rend un
+  chemin cassé `\D:\…` sur Windows). Validé en CI Windows (le build passe).
+  (packages/zignapi/build.zig, native/vendor/node_api.def, templates/build.zig,
+  examples/hello-world/build.zig)
 - 2026-07-25 — **Backend WASM** (le même `register`, deux cibles) — cf. section
   « Backend WASM ». Nouveau `native/wasm.zig` : cible `wasm32-freestanding`
   (**pas WASI**), arène sur `wasm_allocator` (reset à `__zignapi_alloc`, contrat de

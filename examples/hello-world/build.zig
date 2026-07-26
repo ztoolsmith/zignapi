@@ -11,7 +11,8 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
     const is_wasm = target.result.cpu.arch.isWasm();
 
-    const zignapi = b.dependency("zignapi", .{}).module("zignapi");
+    const zignapi_dep = b.dependency("zignapi", .{});
+    const zignapi = zignapi_dep.module("zignapi");
 
     const mod = b.createModule(.{
         .root_source_file = b.path("native/main.zig"),
@@ -34,7 +35,25 @@ pub fn build(b: *std.Build) void {
         // Équivalent portable de `-undefined dynamic_lookup` (macOS) : on laisse les
         // symboles N-API indéfinis pour que Node les résolve au chargement.
         addon.linker_allow_shlib_undefined = true;
+        linkNapiOnWindows(b, addon, target, zignapi_dep);
         const install = b.addInstallFileWithDir(addon.getEmittedBin(), .lib, "hello.node");
         b.getInstallStep().dependOn(&install.step);
     }
+}
+
+/// Windows : génère une import lib depuis le `node_api.def` vendored par zignapi
+/// et lie l'addon dessus (une DLL Windows ne peut pas laisser les symboles N-API
+/// indéfinis comme ELF/Mach-O). No-op hors Windows.
+fn linkNapiOnWindows(
+    b: *std.Build,
+    addon: *std.Build.Step.Compile,
+    target: std.Build.ResolvedTarget,
+    zignapi_dep: *std.Build.Dependency,
+) void {
+    if (target.result.os.tag != .windows) return;
+    const gen = b.addSystemCommand(&.{ b.graph.zig_exe, "lib", "-nologo" });
+    gen.addPrefixedFileArg("/def:", zignapi_dep.namedLazyPath("node_api_def"));
+    const implib = gen.addPrefixedOutputFileArg("/out:", "node_api.lib");
+    gen.addArg(if (target.result.cpu.arch == .aarch64) "/machine:arm64" else "/machine:x64");
+    addon.root_module.addObjectFile(implib);
 }

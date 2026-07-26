@@ -1,6 +1,6 @@
 {
   "name": "zignapi",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "CLI pour scaffolder et builder des addons Node.js natifs écrits en Zig (commande `zignapi`)",
   "keywords": ["zig", "napi", "node-api", "native", "addon", "zignapi"],
   "type": "module",
