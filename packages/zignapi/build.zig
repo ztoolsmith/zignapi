@@ -29,6 +29,14 @@ pub fn build(b: *std.Build) void {
     });
     mod.addIncludePath(headers);
 
+    // Expose the N-API import-definition file to consumers as a NAMED lazy path.
+    // On Windows a consumer generates an import library from it (a DLL can't
+    // leave the N-API symbols undefined). Exposing it via `b.path` here (relative
+    // to zignapi) + `dependency.namedLazyPath` there travels correctly across the
+    // dependency boundary — unlike `dependency.path`, which mangles the path on
+    // Windows (leading `\` before the drive letter).
+    b.addNamedLazyPath("node_api_def", b.path("native/vendor/node_api.def"));
+
     // Standalone compile check. Built as an object, so the still-undefined
     // N-API symbols are fine (they resolve when a real addon links). Failing
     // to compile any of the conversion/registration code fails `zig build`.
